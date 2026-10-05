@@ -1,14 +1,34 @@
 [Unit]
- Description=KlipperLCD Service
- After=moonraker.service
+Description=KlipperLCD Service
+Documentation=file:/home/pi/KlipperLCD/README.md
+After=network-online.target moonraker.service
+Wants=network-online.target
 
 [Service]
- Type=simple
- User=pi
- Restart=always
- RestartSec=1
- ExecStart=/bin/sh -c '/usr/bin/env python3 /home/pi/KlipperLCD/main.py  > /tmp/KlipperLCD.log 2>&1'
+Type=simple
+User=pi
+Group=pi
+# SupplementaryGroups=dialout
+
+WorkingDirectory=/home/pi/KlipperLCD
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/usr/bin/python3 /home/pi/KlipperLCD/main.py
+StandardOutput=append:/tmp/KlipperLCD.log
+StandardError=append:/tmp/KlipperLCD.log
+
+#alternative log, to watch: $ journalctl -u KlipperLCD -f.
+# StandardOutput=journal
+# StandardError=journal
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+TimeoutStopSec=10
+KillSignal=SIGTERM
+KillMode=mixed
 
 [Install]
- WantedBy=multi-user.target
-
+WantedBy=multi-user.target

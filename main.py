@@ -7,19 +7,19 @@ from threading import Thread
 from datetime import timedelta
 
 from printer import PrinterData
-from lcd import LCD, _printerData
+from lcd import LCD, _PrinterData
 
 class KlipperLCD ():
     def __init__(self):
         self.lcd = LCD("/dev/ttyAMA0", callback=self.lcd_callback)
         self.lcd.start()
-        self.printer = PrinterData('XXXXXX', URL=("127.0.0.1"), callback=self.printer_callback)
+        self.printer = PrinterData('XXXXXX', url="127.0.0.1", callback=self.printer_callback)
         self.running = False
         self.wait_probe = False
-        self.thumbnail_inprogress = False
+        self.thumbnail_in_progress = False
 
         progress_bar = 1
-        while self.printer.update_variable() == False:
+        while not self.printer.update_variable():
             progress_bar += 5
             self.lcd.boot_progress(progress_bar)
             time.sleep(1)
@@ -46,13 +46,13 @@ class KlipperLCD ():
     def update(self):
         if self.wait_probe:
             print("Zpos=%f, Zoff=%f" % (self.printer.current_position.z, self.printer.BABY_Z_VAR))
-            if self.printer.ishomed():
+            if self.printer.is_homed():
                     self.wait_probe = False
                     print("IsHomed")
                     self.lcd.probe_mode_start()
 
         self.printer.update_variable()
-        data = _printerData()
+        data = _PrinterData()
         data.hotend_target = self.printer.thermalManager['temp_hotend'][0]['target']
         data.hotend        = self.printer.thermalManager['temp_hotend'][0]['celsius']
         data.bed_target    = self.printer.thermalManager['temp_bed']['target']
@@ -140,7 +140,7 @@ class KlipperLCD ():
         else:
             print("File path or name to gcode-files missing")
         
-        self.thumbnail_inprogress = False
+        self.thumbnail_in_progress = False
 
     def lcd_callback(self, evt, data=None):
         if evt == self.lcd.evt.HOME:
@@ -165,11 +165,11 @@ class KlipperLCD ():
             return files
         elif evt == self.lcd.evt.PRINT_START:
             self.printer.openAndPrintFile(data)
-            if self.thumbnail_inprogress == False:
-                self.thumbnail_inprogress = True
+            if not self.thumbnail_in_progress:
+                self.thumbnail_in_progress = True
         elif evt == self.lcd.evt.THUMBNAIL:
-            if self.thumbnail_inprogress == False:
-                self.thumbnail_inprogress = True
+            if not self.thumbnail_in_progress:
+                self.thumbnail_in_progress = True
                 Thread(target=self.show_thumbnail).start()
         elif evt == self.lcd.evt.PRINT_STATUS:
             pass
@@ -184,7 +184,7 @@ class KlipperLCD ():
         elif evt == self.lcd.evt.FLOW:
             self.printer.set_flow(data)
         elif evt == self.lcd.evt.PROBE:
-            if data == None:
+            if data is None:
                 self.printer.probe_calibrate()
                 self.wait_probe = True
             else:

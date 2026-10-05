@@ -1,8 +1,14 @@
 import binascii
+import enum
+import types
+
+from numbers import Number
 from time import sleep
 from threading import Thread
 from array import array
 from io import BytesIO
+from typing import Sized
+
 from PIL import Image
 import lib_col_pic
 
@@ -41,21 +47,21 @@ TPU   = 3
 PROBE = 4
 
 
-class _printerData():
-    hotend_target   = None
+class _PrinterData:
+    hotend_target   = 0
     hotend          = None
-    bed_target      = None
+    bed_target      = 0
     bed             = None
 
     state           = None
 
-    percent         = None
+    percent         = 0
     duration        = None
     remaining       = None
     print_time      = None
-    feedrate        = None
+    feedrate        = 0
     flowrate        = 0
-    fan             = None
+    fan             = 0.0
     led             = None
     x_pos           = None
     y_pos           = None
@@ -64,12 +70,12 @@ class _printerData():
     z_requested     = None
     file_name       = None
     
-    max_velocity           = None
-    max_accel              = None
+    max_velocity           = 0
+    max_accel              = 0
     minimum_cruise_ratio   = None
     square_corner_velocity = None
 
-class LCDEvents():
+class LCDEvents:
     HOME           = 1
     MOVE_X         = 2
     MOVE_Y         = 3
@@ -105,15 +111,15 @@ class LCD:
     leveling_step=None
 
     def __init__(self, port=None, baud=115200, callback=None):
-        self.addr_func_map = {
-            0x1002: self._MainPage,          
-            0x1004: self._Adjustment,        
-            0x1006: self._PrintSpeed,        
-            0x1008: self._StopPrint,         
-            0x100A: self._PausePrint,        
-            0x100C: self._ResumePrint,       
-            0x1026: self._ZOffset,           
-            0x1030: self._TempScreen,        
+        self.addr_func_map : dict[int, types.FunctionType] = {
+            0x1002: self._main_page,
+            0x1004: self._adjustment,
+            0x1006: self._print_speed,
+            0x1008: self._stop_print,
+            0x100A: self._pause_print,
+            0x100C: self._resume_print,
+            0x1026: self._z_offset,
+            0x1030: self._temp_screen,
             0x1032: self._CoolScreen,        
             0x1034: self._Heater0TempEnter,  
             0x1038: self._Heater1TempEnter,  
@@ -122,34 +128,34 @@ class LCD:
             0x1040: self._SettingBack,       
             0x1044: self._BedLevelFun,       
             0x1046: self._AxisPageSelect,    
-            0x1048: self._Xaxismove,         
-            0x104A: self._Yaxismove,         
-            0x104C: self._Zaxismove,         
-            0x104E: self._SelectExtruder,    
-            0x1054: self._Heater0LoadEnter,  
-            0x1056: self._FilamentLoad,      
-            0x1058: self._Heater1LoadEnter,  
-            0x105C: self._SelectLanguage,    
-            0x105E: self._FilamentCheck,     
-            0x105F: self._PowerContinuePrint,
-            0x1090: self._PrintSelectMode,   
-            0x1092: self._XhotendOffset,     
-            0x1094: self._YhotendOffset,     
-            0x1096: self._ZhotendOffset,     
-            0x1098: self._StoreMemory,       
-            0x2198: self._PrintFile,         
+            0x1048: self._x_axis_move,
+            0x104A: self._y_axis_move,
+            0x104C: self._z_axis_move,
+            0x104E: self._select_extruder,
+            0x1054: self._heater0_load_enter,
+            0x1056: self._filament_load,
+            0x1058: self._heater1_load_enter,
+            0x105C: self._select_language,
+            0x105E: self._filament_check,
+            0x105F: self._power_continue_print,
+            0x1090: self._print_select_mode,
+            0x1092: self._xhotend_offset,
+            0x1094: self._yhotend_offset,
+            0x1096: self._zhotend_offset,
+            0x1098: self._store_memory,
+            0x2198: self._print_file,
             0x2199: self._SelectFile,        
-            0x110E: self._ChangePage,        
-            0x2200: self._SetPreNozzleTemp,  
-            0x2201: self._SetPreBedTemp,     
-            0x2202: self._HardwareTest,      
-            0X2203: self._Err_Control,
-            0x4201: self._Console
+            0x110E: self._change_page,
+            0x2200: self._set_pre_nozzle_temp,
+            0x2201: self._set_pre_bed_temp,
+            0x2202: self._hardware_test,
+            0X2203: self._err_control,
+            0x4201: self._console
         }
 
         self.evt = LCDEvents()
         self.callback = callback
-        self.printer = _printerData()
+        self.printer = _PrinterData()
                          # PLA, ABS, PETG, TPU, PROBE 
         self.preset_temp     = [200, 245,  225, 220, 200]
         self.preset_bed_temp = [ 60, 100,   70,  60,  60]
@@ -165,7 +171,7 @@ class LCD:
         self.rx_state = RX_STATE_IDLE
         self.error_from_lcd = False
         # List of GCode files
-        self.files = False
+        self.files : bool|Sized = False
         self.selected_file = False
         self.waiting = None
         # Adjusting temp and move axis params
@@ -281,7 +287,7 @@ class LCD:
 
         # Send image to screen
         self.error_from_lcd = True 
-        while self.error_from_lcd == True:
+        while self.error_from_lcd:
             print("Write thumbnail to LCD")
             self.error_from_lcd = False 
 
@@ -307,7 +313,7 @@ class LCD:
             self.is_thumbnail_written = True
             print("Write thumbnail to LCD done!")
         
-        if self.askprint == True:
+        if self.askprint:
             self.write("askprint.cp0.aph=127")
             self.write("askprint.cp0.write(printpause.va1.txt)")            
    
@@ -371,7 +377,7 @@ class LCD:
         if data.bed != self.printer.bed or data.bed_target != self.printer.bed_target:
             self.write("main.bedtemp.txt=\"%d / %d\"" % (data.bed, data.bed_target))
         if data.led != self.printer.led:
-            if(data.led > 0):
+            if data.led > 0:
                 self.light=True
                 self.write("status_led2=1")
             else: 
@@ -379,7 +385,7 @@ class LCD:
                 self.write("status_led2=0")
 
         if data.fan != self.printer.fan:
-            if(data.fan > 0):
+            if data.fan > 0:
                 self.fan=True
                 self.write("set.va0.val=1")
             else: 
@@ -387,7 +393,7 @@ class LCD:
                 self.write("set.va0.val=0")
 
         if self.probe_mode:
-            self.write("leveldata.z_offset.val=%d" % (int)(data.z_offset * 100))
+            self.write("leveldata.z_offset.val=%d" % int(data.z_offset * 100))
             #self.write("adjustzoffset.z_offset.val=%d" % (int)(data.z_pos * 100))
 
         if self.leveling_step is not None:
@@ -426,22 +432,22 @@ class LCD:
                     self.write("page printpause")
                     self.write("restFlag1=0")
                     self.write("restFlag2=1")
-                    if self.is_thumbnail_written == False:
+                    if not self.is_thumbnail_written:
                         self.callback(self.evt.THUMBNAIL, None)
                 elif data.state == "paused" or data.state == "pausing":
                     print("Ongoing pause detected")
                     self.write("page printpause")
                     self.write("restFlag1=1")
-                    if self.is_thumbnail_written == False:
+                    if not self.is_thumbnail_written:
                         self.callback(self.evt.THUMBNAIL, None)
-                elif (data.state == "cancelled"):
+                elif data.state == "cancelled":
                     self.write("page main")
                     self.is_thumbnail_written = False
-                elif (data.state == "complete"):
+                elif data.state == "complete":
                     self.write("printpause.printtime.txt=\"%d h %d min\"" % (data.print_time/3600,(data.print_time % 3600)/60))
                     self.write("page printfinish")
                     self.is_thumbnail_written = False
-                elif (data.state == "standby"):
+                elif data.state == "standby":
                     self.is_thumbnail_written = False
 
         if data != self.printer:
@@ -458,27 +464,27 @@ class LCD:
 
     def run(self):
         while self.running:
-                incomingByte = self.ser.read(1)
+                incoming_byte = self.ser.read(1)
                 #
                 if self.rx_state == RX_STATE_IDLE:
-                    if incomingByte[0] == FHONE:
-                        self.rx_buf.extend(incomingByte)
-                    elif incomingByte[0] == FHTWO:
+                    if incoming_byte[0] == FHONE:
+                        self.rx_buf.extend(incoming_byte)
+                    elif incoming_byte[0] == FHTWO:
                         if self.rx_buf[0] == FHONE:
-                            self.rx_buf.extend(incomingByte)
+                            self.rx_buf.extend(incoming_byte)
                             self.rx_state = RX_STATE_READ_LEN
                         else:
                             self.rx_buf.clear()
-                            print("Unexpected header received: 0x%02x ()" % incomingByte[0])         
+                            print("Unexpected header received: 0x%02x ()" % incoming_byte[0])
                     else:
                         self.rx_buf.clear()
                         self.error_from_lcd = True
-                        print("Unexpected data received: 0x%02x" % incomingByte[0])
+                        print("Unexpected data received: 0x%02x" % incoming_byte[0])
                 #
                 elif self.rx_state == RX_STATE_READ_LEN:
                     # Check if len is as expected, seems to alway be 6 bytes?
                     #if incomingByte[0] == FHLEN:
-                    self.rx_buf.extend(incomingByte) # Read length
+                    self.rx_buf.extend(incoming_byte) # Read length
                     self.rx_state = RX_STATE_READ_DAT
                     #else:
                     #    self.rx_buf.clear()
@@ -486,7 +492,7 @@ class LCD:
                     #    print("Unexpected len param received: 0x%02x" % incomingByte[0])
                 #
                 elif self.rx_state == RX_STATE_READ_DAT:
-                    self.rx_buf.extend(incomingByte)
+                    self.rx_buf.extend(incoming_byte)
                     self.rx_data_cnt += 1
                     len = self.rx_buf[2]
                     if self.rx_data_cnt >= len:
@@ -525,7 +531,7 @@ class LCD:
     def _handle_readvar(self, addr, data):
         if addr in self.addr_func_map:
             # Call function corresponding with addr
-            if (self.addr_func_map[addr].__name__ == "_BedLevelFun" and data[0] == 0x0a):
+            if self.addr_func_map[addr].__name__ == "_BedLevelFun" and data[0] == 0x0a:
                 pass ## Avoid to spam the log file while printing
             else:
                 print("%s: len: %d data[0]: %x" % (self.addr_func_map[addr].__name__, len(data), data[0]))
@@ -533,7 +539,7 @@ class LCD:
         else:
             print("_handle_readvar: addr %x not recognised" % addr)
 
-    def _Console(self, data):
+    def _console(self, data):
         if data[0] == 0x01: # Back
             state = self.printer.state
             if state == "printing" or state == "paused" or state == "pausing":
@@ -544,12 +550,12 @@ class LCD:
             print(data.decode())
             self.callback(self.evt.CONSOLE, data.decode())
 
-    def _MainPage(self, data):
+    def _main_page(self, data):
         if data[0] == 1: # Print
             # Request files
             files = self.callback(self.evt.FILES)
             self.files = files
-            if (files):
+            if files:
                 i = 0
                 for file in files:
                     print(file)
@@ -570,7 +576,7 @@ class LCD:
         else:
             print("_MainPage: %d not supported" % data[0])
     
-    def _Adjustment(self, data):
+    def _adjustment(self, data):
         if data[0] == 0x01: # Filament tab
             self.write("adjusttemp.targettemp.val=%d" % self.printer.hotend_target)
             self.write("adjusttemp.va0.val=1")
@@ -602,7 +608,7 @@ class LCD:
             self.speed_adjusting = None
             self.write("adjustzoffset.zoffset_value.val=2")
             print(self.printer.z_offset)
-            self.write("adjustzoffset.z_offset.val=%d" % (int) (self.printer.z_offset * 100))
+            self.write("adjustzoffset.z_offset.val=%d" % int(self.printer.z_offset * 100))
             self.write("page adjustzoffset")
         elif data[0] == 0x08: #
             self.printer.feedrate = 100
@@ -617,12 +623,12 @@ class LCD:
             self.write("adjustspeed.targetspeed.val=%d" % 100)
             self.callback(self.evt.FAN, self.printer.fan)
         else:
-            print("_Adjustment: %d not supported" % data[0])
+            print("_adjustment: %d not supported" % data[0])
     
-    def _PrintSpeed(self, data):        
-        print("_PrintSpeed: %d not supported" % data[0])
+    def _print_speed(self, data):
+        print("_print_speed: %d not supported" % data[0])
     
-    def _StopPrint(self, data):  
+    def _stop_print(self, data):
         if data[0] == 0x01 or data[0] == 0xf1:
             self.callback(self.evt.PRINT_STOP)
             self.write("resumeconfirm.t1.txt=\"Stopping print. Please wait!\"")
@@ -630,9 +636,9 @@ class LCD:
             if self.printer.state == "printing":
                 self.write("page printpause")
         else:
-            print("_StopPrint: %d not supported" % data[0])
+            print("_stop_print: %d not supported" % data[0])
     
-    def _PausePrint(self, data):        
+    def _pause_print(self, data):
         if data[0] == 0x01:
             if self.printer.state == "printing":
                 self.write("page pauseconfirm")
@@ -640,21 +646,21 @@ class LCD:
             self.callback(self.evt.PRINT_PAUSE)
             self.write("page printpause")
         else:
-            print("_PausePrint: %d not supported" % data[0])
+            print("_pause_print: %d not supported" % data[0])
            
     
-    def _ResumePrint(self, data):       
+    def _resume_print(self, data):
         if data[0] == 0x01:
             if self.printer.state == "paused" or self.printer.state == "pausing":
                 self.callback(self.evt.PRINT_RESUME)
             self.write("page printpause")
         else:
-            print("_ResumePrint: %d not supported" % data[0])
+            print("_resume_print: %d not supported" % data[0])
     
-    def _ZOffset(self, data):           
-        print("_ZOffset: %d not supported" % data[0])
+    def _z_offset(self, data):
+        print("_z_offset: %d not supported" % data[0])
     
-    def _TempScreen(self, data):
+    def _temp_screen(self, data):
         if data[0] == 0x01: # Hotend
             self.write("adjusttemp.targettemp.val=%d" % self.printer.hotend_target)
             self.adjusting = 'Hotend'
@@ -777,8 +783,20 @@ class LCD:
             # self.printer.square_corner_velocity = new_velocity
 
         else:
-            print("_TempScreen: Not recognised %d" % data[0])
-    
+            print("_temp_screen: Not recognised %d" % data[0])
+
+    def _preheat(self, preset_code: int):
+        self.callback(self.evt.NOZZLE, self.preset_temp[preset_code])
+        self.callback(self.evt.BED, self.preset_bed_temp[preset_code])
+        self.write("pretemp.nozzle.txt=\"%d\"" % self.preset_temp[preset_code])
+        self.write("pretemp.bed.txt=\"%d\"" % self.preset_bed_temp[preset_code])
+
+    def _preheat_settings(self, preset_code: int):
+        self.preset_index = preset_code
+        self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[preset_code])
+        self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[preset_code])
+        self.write("page tempsetvalue")
+
     def _CoolScreen(self, data):
         if data[0] == 0x01: #Turn off nozzle
             if self.printer.state == "printing":
@@ -789,50 +807,23 @@ class LCD:
         elif data[0] == 0x02: #Turn off bed
             self.callback(self.evt.BED, 0)
         elif data[0] == 0x09: #Preheat PLA
-            self.callback(self.evt.NOZZLE, self.preset_temp[PLA])
-            self.callback(self.evt.BED, self.preset_bed_temp[PLA])
-            self.write("pretemp.nozzle.txt=\"%d\"" % self.preset_temp[PLA])
-            self.write("pretemp.bed.txt=\"%d\"" % self.preset_bed_temp[PLA])
+            self._preheat(PLA)
         elif data[0] == 0x0a: #Preheat ABS
-            self.callback(self.evt.NOZZLE, self.preset_temp[ABS])
-            self.callback(self.evt.BED, self.preset_bed_temp[ABS])
-            self.write("pretemp.nozzle.txt=\"%d\"" % self.preset_temp[ABS])
-            self.write("pretemp.bed.txt=\"%d\"" % self.preset_bed_temp[ABS])
+            self._preheat(ABS)
         elif data[0] == 0x0b: #Preheat PETG
-            self.callback(self.evt.NOZZLE, self.preset_temp[PETG])
-            self.callback(self.evt.BED, self.preset_bed_temp[PETG])
-            self.write("pretemp.nozzle.txt=\"%d\"" % self.preset_temp[PETG])
-            self.write("pretemp.bed.txt=\"%d\"" % self.preset_bed_temp[PETG])
+            self._preheat(PETG)
         elif data[0] == 0x0c: #Preheat TPU
-            self.callback(self.evt.NOZZLE, self.preset_temp[TPU])
-            self.callback(self.evt.BED, self.preset_bed_temp[TPU])
-            self.write("pretemp.nozzle.txt=\"%d\"" % self.preset_temp[TPU])
-            self.write("pretemp.bed.txt=\"%d\"" % self.preset_bed_temp[TPU])
+            self._preheat(TPU)
         elif data[0] == 0x0d: #Preheat PLA setting
-            self.preset_index = PLA
-            self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[PLA])
-            self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[PLA])
-            self.write("page tempsetvalue")
+            self._preheat_settings(PLA)
         elif data[0] == 0x0e: #Preheat ABS setting
-            self.preset_index = ABS
-            self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[ABS])
-            self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[ABS])
-            self.write("page tempsetvalue")
+            self._preheat_settings(ABS)
         elif data[0] == 0x0f: #Preheat PETG setting
-            self.preset_index = PETG
-            self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[PETG])
-            self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[PETG])
-            self.write("page tempsetvalue")
+            self._preheat_settings(PETG)
         elif data[0] == 0x10: #Preheat TPU setting
-            self.preset_index = TPU
-            self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[TPU])
-            self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[TPU])
-            self.write("page tempsetvalue")
+            self._preheat_settings(TPU)
         elif data[0] == 0x11: # Level
-            self.preset_index = PROBE
-            self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[PROBE])
-            self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[PROBE])
-            self.write("page tempsetvalue")
+            self._preheat_settings(PROBE)
         else:
             print("_CoolScreen: Not recognised %d" % data[0])
     
@@ -857,7 +848,7 @@ class LCD:
         elif data[0] == 0x06: # Motor release
             self.callback(self.evt.MOTOR_OFF)
         elif data[0] == 0x07: # Fan Control
-            if self.fan == True:
+            if self.fan:
                 self.fan = False
                 self.write("set.va0.val=0")
                 self.callback(self.evt.FAN, 0)
@@ -929,7 +920,7 @@ class LCD:
         elif data[0] == 0x07: # LED 2 TODO: Where is LED2??
             print("Toggle led2!!????")
         elif data[0] == 0x08: # Light control
-            if self.light == True:
+            if self.light:
                 self.light = False
                 self.write("status_led2=0")
                 self.callback(self.evt.LIGHT, 0)
@@ -954,7 +945,7 @@ class LCD:
             #status = self.callback(self.evt.PRINT_STATUS)
             self.write("printpause.printspeed.txt=\"%d\"" % self.printer.feedrate)
             self.write("printpause.fanspeed.txt=\"%d\"" % self.printer.fan)
-            self.write("printpause.zvalue.val=%d" % (int)(self.printer.z_pos*10))
+            self.write("printpause.zvalue.val=%d" % int(self.printer.z_pos * 10))
             self.write("printpause.printtime.txt=\"%d h %d min\"" % (self.printer.remaining/3600,(self.printer.remaining % 3600)/60))
             self.write("printpause.printprocess.val=%d" % self.printer.percent)
             self.write("printpause.printvalue.txt=\"%d\"" % self.printer.percent)
@@ -988,44 +979,44 @@ class LCD:
         else:
             print("_AxisPageSelect: Data not recognised %d" % data[0])
     
-    def _Xaxismove(self, data):
+    def _x_axis_move(self, data):
         if data[0] == 0x01: # X+
             self.callback(self.evt.MOVE_X, self.move_unit)
         elif data[0] == 0x02: # X-
             self.callback(self.evt.MOVE_X, -self.move_unit)
         else:
-            print("_Xaxismove: Data not recognised %d" % data[0])
+            print("_x_axis_move: Data not recognised %d" % data[0])
     
-    def _Yaxismove(self, data):         
+    def _y_axis_move(self, data):
         if data[0] == 0x01: # Y+
             self.callback(self.evt.MOVE_Y, self.move_unit)
         elif data[0] == 0x02: # Y-
             self.callback(self.evt.MOVE_Y, -self.move_unit)
         else:
-            print("_Yaxismove: Data not recognised %d" % data[0])
+            print("_y_axis_move: Data not recognised %d" % data[0])
     
-    def _Zaxismove(self, data):
+    def _z_axis_move(self, data):
         if data[0] == 0x01: # Z+
             self.callback(self.evt.MOVE_Z, self.move_unit)
         elif data[0] == 0x02: # Z-
             self.callback(self.evt.MOVE_Z, -self.move_unit)
         else:
-            print("_Zaxismove: Data not recognised %d" % data[0])
+            print("_z_axis_move: Data not recognised %d" % data[0])
     
-    def _SelectExtruder(self, data):    
-        print("_SelectExtruder: Not recognised %d" % data[0])
+    def _select_extruder(self, data):
+        print("_select_extruder: Not recognised %d" % data[0])
     
-    def _Heater0LoadEnter(self, data):
+    def _heater0_load_enter(self, data):
         load_len = ((data[0] & 0x00FF) << 8) | ((data[0] & 0xFF00) >> 8)
         self.load_len = load_len
         print(load_len)
 
-    def _Heater1LoadEnter(self, data):  
+    def _heater1_load_enter(self, data):
         feedrate_e = ((data[0] & 0x00FF) << 8) | ((data[0] & 0xFF00) >> 8)
         self.feedrate_e = feedrate_e
         print(feedrate_e)
     
-    def _FilamentLoad(self, data):
+    def _filament_load(self, data):
         if data[0] == 0x01 or data[0] == 0x02: # Load / Unload 
             if self.printer.state == 'printing':
                 self.write("page warn1_filament")
@@ -1042,33 +1033,33 @@ class LCD:
         elif data[0] == 0x0a: # Back
             self.write("page main")
         else:   
-            print("_FilamentLoad: Not recognised %d" % data[0])
+            print("_filament_load: Not recognised %d" % data[0])
     
-    def _SelectLanguage(self, data):    
-        print("_SelectLanguage: Not recognised %d" % data[0])
+    def _select_language(self, data):
+        print("_select_language: Not recognised %d" % data[0])
     
-    def _FilamentCheck(self, data):     
-        print("_FilamentCheck: Not recognised %d" % data[0])
+    def _filament_check(self, data):
+        print("_filament_check: Not recognised %d" % data[0])
     
-    def _PowerContinuePrint(self, data):
-        print("_PowerContinuePrint: Not recognised %d" % data[0])
+    def _power_continue_print(self, data):
+        print("_power_continue_print: Not recognised %d" % data[0])
     
-    def _PrintSelectMode(self, data):   
-        print("_PrintSelectMode: Not recognised %d" % data[0])
+    def _print_select_mode(self, data):
+        print("_print_select_mode: Not recognised %d" % data[0])
     
-    def _XhotendOffset(self, data):     
-        print("_XhotendOffset: Not recognised %d" % data[0])
+    def _xhotend_offset(self, data):
+        print("_xhotend_offset: Not recognised %d" % data[0])
     
-    def _YhotendOffset(self, data):     
-        print("_YhotendOffset: Not recognised %d" % data[0])
+    def _yhotend_offset(self, data):
+        print("_yhotend_offset: Not recognised %d" % data[0])
     
-    def _ZhotendOffset(self, data):     
-        print("_ZhotendOffset: Not recognised %d" % data[0])
+    def _zhotend_offset(self, data):
+        print("_zhotend_offset: Not recognised %d" % data[0])
     
-    def _StoreMemory(self, data):       
-        print("_StoreMemory: Not recognised %d" % data[0])
+    def _store_memory(self, data):
+        print("_store_memory: Not recognised %d" % data[0])
     
-    def _PrintFile(self, data):
+    def _print_file(self, data):
         if data[0] == 0x01:
             self.write("file%d.t%d.pco=65504" % ((self.selected_file / 5) + 1, self.selected_file))
             #self.write("leveldata.z_offset.val=%d" % 0)
@@ -1091,7 +1082,7 @@ class LCD:
                 self.write("page main")
             
         else:
-            print("_PrintFile: Not recognised %d" % data[0])
+            print("_print_file: Not recognised %d" % data[0])
     
     def _SelectFile(self, data):
         print(self.files)
@@ -1108,10 +1099,10 @@ class LCD:
             print("_SelectFile: Data not recognised %d" % data[0])
 
     
-    def _ChangePage(self, data):        
-        print("_ChangePage: Not recognised %d" % data[0])
+    def _change_page(self, data):
+        print("_change_page: Not recognised %d" % data[0])
     
-    def _SetPreNozzleTemp(self, data):
+    def _set_pre_nozzle_temp(self, data):
         material = self.preset_index
         if data[0] == 0x01:
             self.preset_temp[material] += self.temp_unit
@@ -1119,7 +1110,7 @@ class LCD:
             self.preset_temp[material] -= self.temp_unit
         self.write("tempsetvalue.nozzletemp.val=%d" % self.preset_temp[material])
     
-    def _SetPreBedTemp(self, data):
+    def _set_pre_bed_temp(self, data):
         material = self.preset_index
         if data[0] == 0x01:
             self.preset_bed_temp[material] += self.temp_unit
@@ -1128,14 +1119,14 @@ class LCD:
         material = self.preset_index
         self.write("tempsetvalue.bedtemp.val=%d" % self.preset_bed_temp[material])
     
-    def _HardwareTest(self, data):
+    def _hardware_test(self, data):
         if data[0] == 0x0f: # Hardware test page
             pass #Always requested on main page load, ignore
         else:
-            print ("_HardwareTest: Not implemented: 0x%x" % data[0])
+            print ("_hardware_test: Not implemented: 0x%x" % data[0])
     
-    def _Err_Control(self, data):       
-        print("_Err_Control: Not recognised %d" % data[0])
+    def _err_control(self, data):
+        print("_err_control: Not recognised %d" % data[0])
 
 
 if __name__ == "__main__":

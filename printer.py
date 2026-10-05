@@ -12,7 +12,7 @@ import time
 import asyncio
 import os
 
-class xyze_t:
+class XYZET:
 	x = 0.0
 	y = 0.0
 	z = 0.0
@@ -44,7 +44,7 @@ class AxisEnum:
 	ALL_AXES = 0xFE
 	NO_AXIS = 0xFF
 
-class HMI_value_t:
+class HMIValueT:
 	E_Temp = 0
 	Bed_Temp = 0
 	Fan_speed = 0
@@ -60,7 +60,7 @@ class HMI_value_t:
 	offset_value = 0.0
 	show_mode = 0  # -1: Temperature control    0: Printing temperature
 
-class HMI_Flag_t:
+class HMIFlagT:
 	language = 0
 	pause_flag = False
 	pause_action = False
@@ -76,21 +76,25 @@ class HMI_Flag_t:
 	jerk_axis = AxisEnum()
 	step_axis = AxisEnum()
 
-class buzz_t:
+class BuzzT:
 	def tone(self, t, n):
 		pass
 
-class material_preset_t:
+class MaterialPresetT:
 	def __init__(self, name, hotend_temp, bed_temp, fan_speed=100):
 		self.name = name
 		self.hotend_temp = hotend_temp
 		self.bed_temp = bed_temp
 		self.fan_speed = fan_speed
 
+
+# noinspection PyBroadException
 class KlippySocket:
 	def __init__(self, uds_filename, callback=None):
 		self.connected = False
-		self.webhook_socket_create(uds_filename)
+		self.webhook_socket = self.webhook_socket_create(uds_filename)
+		self.connected = True
+
 		self.lock = threading.Lock()
 		self.poll = select.poll()
 		self.stop_threads = False
@@ -100,20 +104,21 @@ class KlippySocket:
 		self.callback = callback
 		self.lines = []
 		self.t.start()
-		atexit.register(self.klippyExit)
+		atexit.register(self.klippy_exit)
 
-	def klippyExit(self):
-		print("Shuting down Klippy Socket")
+	def klippy_exit(self):
+		print("Shutting down Klippy Socket")
 		self.stop_threads = True
 		self.t.join()
 
-	def webhook_socket_create(self, uds_filename):
-		self.webhook_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		self.webhook_socket.setblocking(0)
+	@staticmethod
+	def webhook_socket_create(uds_filename) -> socket:
+		webhook_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+		webhook_socket.setblocking(False)
 		print("Waiting for connect to %s\n" % (uds_filename,))
 		while 1:
 			try:
-				self.webhook_socket.connect(uds_filename)
+				webhook_socket.connect(uds_filename)
 			except socket.error as e:
 				if e.errno == errno.ECONNREFUSED:
 					time.sleep(0.1)
@@ -126,7 +131,7 @@ class KlippySocket:
 				exit(-1)
 			break
 		print("Connection.\n")
-		self.connected = True
+		return webhook_socket
 
 	def process_socket(self):
 		data = None
@@ -170,21 +175,26 @@ class KlippySocket:
 				break
 			res = self.poll.poll(1000.)
 			for fd, event in res:
+				whs_fd = self.webhook_socket.fileno()
+				if fd != whs_fd:
+					print(f"Another socket event! Expected: {whs_fd}, recvd: {fd}")
+				print(f"evnt: {fd} -> {event}")
 				self.process_socket()
 			with self.lock:
 				self.send_line()
 
 
 class MoonrakerSocket:
-	def __init__(self, address, port, api_key):
+	def __init__(self, address, port, api_key = None):
 		self.s = requests.Session()
-		self.s.headers.update({
-			'X-Api-Key': api_key,
-			'Content-Type': 'application/json'
-		})
+		hdr = {'Content-Type': 'application/json'}
+		if api_key:
+			hdr['X-Api-Key'] = api_key
+		self.s.headers.update(hdr)
 		self.base_address = 'http://' + address + ':' + str(port)
 
 
+# noinspection PyBroadException
 class PrinterData:
 	event_loop = None
 	HAS_HOTEND = True
@@ -203,14 +213,14 @@ class PrinterData:
 	HEATER_0_MINTEMP = 5
 	HOTEND_OVERSHOOT = 15
 
-	MAX_E_TEMP = (HEATER_0_MAXTEMP - (HOTEND_OVERSHOOT))
+	MAX_E_TEMP = (HEATER_0_MAXTEMP - HOTEND_OVERSHOOT)
 	MIN_E_TEMP = HEATER_0_MINTEMP
 
 	BED_OVERSHOOT = 10
 	BED_MAXTEMP = 150
 	BED_MINTEMP = 5
 
-	BED_MAX_TARGET = (BED_MAXTEMP - (BED_OVERSHOOT))
+	BED_MAX_TARGET = (BED_MAXTEMP - BED_OVERSHOOT)
 	MIN_BED_TEMP = BED_MINTEMP
 
 	X_MIN_POS = 0.0
@@ -221,11 +231,11 @@ class PrinterData:
 	Z_PROBE_OFFSET_RANGE_MIN = -20
 	Z_PROBE_OFFSET_RANGE_MAX = 20
 
-	buzzer = buzz_t()
+	buzzer = BuzzT()
 
 	material_preset = [
-		material_preset_t('PLA', 200, 60),
-		material_preset_t('ABS', 210, 100)
+		MaterialPresetT('PLA', 200, 60),
+		MaterialPresetT('ABS', 210, 100)
 	]
 	files = None
 	MACHINE_SIZE = "220x220x250"
@@ -234,7 +244,7 @@ class PrinterData:
 
 	LED = []
 
-	def __init__(self, API_Key, URL='127.0.0.1', callback=None):
+	def __init__(self, api_key=None, url='127.0.0.1', callback=None):
 		self.response_callback = callback
 		self.BABY_Z_VAR       = 0
 		self.print_speed      = 100
@@ -242,9 +252,9 @@ class PrinterData:
 		self.led_percentage   = 0
 		self.temphot          = 0
 		self.tempbed          = 0
-		self.HMI_ValueStruct  = HMI_value_t()
-		self.HMI_flag         = HMI_Flag_t()
-		self.current_position = xyze_t()
+		self.HMI_ValueStruct  = HMIValueT()
+		self.HMI_flag         = HMIFlagT()
+		self.current_position = XYZET()
 		self.gcm              = None
 		self.z_offset         = 0
 		self.z_requested      = 0
@@ -264,8 +274,25 @@ class PrinterData:
 		self.max_accel              = None
 		self.minimum_cruise_ratio   = None
 		self.square_corner_velocity = None
-		
-		self.op = MoonrakerSocket(URL, 80, API_Key)
+
+		self.ks: KlippySocket|None = None
+		self.klippy_z_offset: str = ''
+		self.klippy_home: str = ''
+		self.gcode: str = ''
+
+		self.X_MAX_POS = 0
+		self.Y_MAX_POS = 0
+
+		self.absolute_moves = None
+		self.absolute_extrude = None
+		self.speed = 0.0
+		self.bed = None
+		self.extruder = None
+		self.fan = None
+		self.toolhead = None
+		self.fan_percentage = 0
+
+		self.op = MoonrakerSocket(url, 80, api_key)
 		print(self.op.base_address)
 
 		# try to find klippy sock in Moonraker config or use generic value
@@ -318,19 +345,19 @@ class PrinterData:
 		self.ks.queue_line(self.gcode)
 
 	def klippy_callback(self, line):
-		klippyData = json.loads(line)
+		klippy_data = json.loads(line)
 		#print("klippy_callback:")
 		#print(json.dumps(klippyData, indent=2))
 		status = None
-		if 'result' in klippyData:
-			if 'status' in klippyData['result']:
-				status = klippyData['result']['status']
-		if 'params' in klippyData:
-			if 'status' in klippyData['params']:
-				status = klippyData['params']['status']
-			if 'response' in klippyData['params']:
+		if 'result' in klippy_data:
+			if 'status' in klippy_data['result']:
+				status = klippy_data['result']['status']
+		if 'params' in klippy_data:
+			if 'status' in klippy_data['params']:
+				status = klippy_data['params']['status']
+			if 'response' in klippy_data['params']:
 				if self.response_callback:
-					resp = klippyData['params']['response']
+					resp = klippy_data['params']['response']
 					if 'B:' in resp and 'T0:' in resp:
 						pass ## Filter out temperature responses
 					else:
@@ -394,13 +421,14 @@ class PrinterData:
 			objects = self.getREST('/printer/objects/list')['result']['objects']
 		except:
 			print("Could not read printer features objects!")
-		
+			objects = []
+
 		for obj in objects:
 			if 'led' in obj:
 				led = obj.split(' ')[1]
 				self.LED.append(led)
 
-	def ishomed(self):
+	def is_homed(self):
 		if self.current_position.home_x and self.current_position.home_y and self.current_position.home_z:
 			return True
 		else:
@@ -418,16 +446,16 @@ class PrinterData:
 
 	def probe_adjust(self, change):
 		if change > 0:
-			strchange = "+{}".format(change)
+			str_change = "+{}".format(change)
 		else:
-			strchange = str(change)
+			str_change = str(change)
 
-		gc = 'SET_GCODE_OFFSET Z_ADJUST={} MOVE=1'.format(strchange)
+		gc = 'SET_GCODE_OFFSET Z_ADJUST={} MOVE=1'.format(str_change)
 		print(gc)
 		self.sendGCode(gc)
 
 	def probe_calibrate(self):
-		if self.ishomed() == False:
+		if not self.is_homed():
 			self.sendGCode('G28')
 		self.sendGCode('PROBE_CALIBRATE')
 		self.sendGCode('G1 Z0.0')
@@ -497,6 +525,7 @@ class PrinterData:
 			objects = self.getREST('/printer/objects/list')['result']['objects']
 		except:
 			print("Could not read macro objects!")
+			objects = {}
 		
 		for obj in objects:
 			if 'gcode_macro' in obj:
@@ -520,8 +549,8 @@ class PrinterData:
 		return names
 
 	def update_variable(self):
-		if self.ks.connected == False:
-			self.ks.klippyExit()
+		if not self.ks.connected:
+			self.ks.klippy_exit()
 			self.klippy_start()
 			return False
 		query = '/printer/objects/query?extruder&heater_bed&gcode_move&fan&print_stats&motion_report&toolhead&display_status'
@@ -552,40 +581,40 @@ class PrinterData:
 		if self.LED and 'led %s' % self.LED[0] in data:
 			self.led_percentage = int(data['led %s' % self.LED[0]]['color_data'][0][3] * 256)
 		self.toolhead = data['toolhead']
-		Update = False
+		update = False
 		try:
 			if self.thermalManager['temp_bed']['celsius'] != int(self.bed['temperature']):
 				self.thermalManager['temp_bed']['celsius'] = int(self.bed['temperature'])
-				Update = True
+				update = True
 			if self.thermalManager['temp_bed']['target'] != int(self.bed['target']):
 				self.thermalManager['temp_bed']['target'] = int(self.bed['target'])
-				Update = True
+				update = True
 			if self.thermalManager['temp_hotend'][0]['celsius'] != int(self.extruder['temperature']):
 				self.thermalManager['temp_hotend'][0]['celsius'] = int(self.extruder['temperature'])
-				Update = True
+				update = True
 			if self.thermalManager['temp_hotend'][0]['target'] != int(self.extruder['target']):
 				self.thermalManager['temp_hotend'][0]['target'] = int(self.extruder['target'])
-				Update = True
+				update = True
 			if self.thermalManager['fan_speed'][0] != int((self.fan['speed'] * 100) + 0.5):
 				self.thermalManager['fan_speed'][0] = int((self.fan['speed'] * 100) + 0.5)
-				Update = True
+				update = True
 			if self.BABY_Z_VAR != self.z_offset:
 				self.BABY_Z_VAR = self.z_offset
 				self.HMI_ValueStruct.offset_value = self.z_offset * 100
-				Update = True
+				update = True
 			
 			if self.max_velocity != self.toolhead['max_velocity']:
 				self.max_velocity = self.toolhead['max_velocity']
-				Update = True
+				update = True
 			if self.max_accel != self.toolhead['max_accel']:
 				self.max_accel = self.toolhead['max_accel']
-				Update = True
+				update = True
 			if self.minimum_cruise_ratio != self.toolhead['minimum_cruise_ratio']:
 				self.minimum_cruise_ratio = self.toolhead['minimum_cruise_ratio']
-				Update = True
+				update = True
 			if self.square_corner_velocity != self.toolhead['square_corner_velocity']:
 				self.square_corner_velocity = self.toolhead['square_corner_velocity']
-				Update = True
+				update = True
 		except:
 			pass #missing key, shouldn't happen, fixes misses on conditionals ¯\_(ツ)_/¯
 		try:
@@ -610,7 +639,7 @@ class PrinterData:
 		if self.job_Info:
 			self.HMI_flag.print_finish = self.getPercent() == 100.0
 
-		return Update
+		return update
 
 	def getState(self):
 		if self.job_Info:
@@ -680,17 +709,17 @@ class PrinterData:
 
 	def set_fan(self, fan):
 		self.fan_percentage = fan
-		self.sendGCode('M106 S%s' % (int)(fan*255/100))
+		self.sendGCode('M106 S%s' % int(fan * 255 / 100))
 
 	def home(self, axis): #fixed using gcode
-		GCode = 'G28 '
+		g_code = 'G28 '
 		if axis == 'X' or axis == 'Y' or axis == 'Z' or axis == 'X Y Z':
-			GCode += axis
+			g_code += axis
 		else:
 			print("home: parameter not recognised" + axis)
 			return
 
-		self.sendGCode(GCode)
+		self.sendGCode(g_code)
 
 	def moveRelative(self, axis, distance, speed):
 		self.sendGCode('%s \n%s %s%s F%s%s' % ('G91', 'G1', axis, distance, speed,
