@@ -24,6 +24,7 @@ class KlipperLCD ():
             self.lcd.boot_progress(progress_bar)
             time.sleep(1)
 
+
         self.printer.init_Webservices()
         gcode_store = self.printer.get_gcode_store()
         self.lcd.write_gcode_store(gcode_store)
@@ -235,6 +236,9 @@ class KlipperLCD ():
             self.update()
         elif evt == self.lcd.evt.CONSOLE:
             self.printer.sendGCode(data)
+        elif evt == self.lcd.evt.GET_PRINTER_DATA:
+            value = self.printer.__getattribute__(data)
+            self.lcd.set_printer_data_value(data, value)
         else:
             print("lcd_callback event not recognised %d" % evt)
 

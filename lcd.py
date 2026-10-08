@@ -2,12 +2,10 @@ import binascii
 import enum
 import types
 
-from numbers import Number
 from time import sleep
 from threading import Thread
 from array import array
 from io import BytesIO
-from typing import Sized
 
 from PIL import Image
 import lib_col_pic
@@ -15,17 +13,20 @@ import lib_col_pic
 import atexit
 import serial
 
-FHONE = 0x5a
-FHTWO = 0xa5
-FHLEN = 0x06
+
+class FHdrId(enum.Enum):
+    ONE = 0x5a
+    TWO = 0xa5
+    LEN = 0x06
 
 MaxFileNumber = 25
 
-RegAddr_W = 0x80
-RegAddr_R = 0x81
-CMD_WRITEVAR = 0x82
-CMD_READVAR  = 0x83
-CMD_CONSOLE  = 0x42
+class CMD(enum.Enum):
+    RegAddr_W = 0x80
+    RegAddr_R = 0x81
+    WRITEVAR = 0x82
+    READVAR  = 0x83
+    CONSOLE  = 0x42
 
 ExchangePageBase = 0x5A010000 # Unsigned long
 StartSoundSet    = 0x060480A0
@@ -35,17 +36,18 @@ FONT_EEPROM      = 0
 ExchangepageAddr = 0x0084
 SoundAddr        = 0x00A0
 
-RX_STATE_IDLE = 0
-RX_STATE_READ_LEN = 1
-RX_STATE_READ_CMD = 2
-RX_STATE_READ_DAT = 3
+class RxState(enum.Enum):
+    IDLE = 0
+    READ_LEN = 1
+    READ_CMD = 2
+    READ_DAT = 3
 
-PLA   = 0
-ABS   = 1
-PETG  = 2
-TPU   = 3
-PROBE = 4
-
+class TPreset(enum.IntEnum):
+    PLA   = 0
+    ABS   = 1
+    PETG  = 2
+    TPU   = 3
+    PROBE = 4
 
 class _PrinterData:
     hotend_target   = 0
@@ -74,6 +76,9 @@ class _PrinterData:
     max_accel              = 0
     minimum_cruise_ratio   = None
     square_corner_velocity = None
+    # retrived
+    MACHINE_SIZE: str
+    SHORT_BUILD_VERSION: str
 
 class LCDEvents:
     HOME           = 1
@@ -105,6 +110,7 @@ class LCDEvents:
     SQUARE_CORNER_VELOCITY = 27
     THUMBNAIL      = 28
     CONSOLE        = 29
+    GET_PRINTER_DATA = 126
 
 
 class LCD:
@@ -168,10 +174,10 @@ class LCD:
         self.running = False
         self.rx_buf = bytearray()
         self.rx_data_cnt = 0
-        self.rx_state = RX_STATE_IDLE
+        self.rx_state = RxState.IDLE
         self.error_from_lcd = False
         # List of GCode files
-        self.files : bool|Sized = False
+        self.files : list[str]|None = None
         self.selected_file = False
         self.waiting = None
         # Adjusting temp and move axis params
@@ -365,6 +371,8 @@ class LCD:
                 line_feed = False
             self.write("macro.cb0.path+=\"%s\"" % macro, lf = line_feed)
 
+    def set_printer_data_value(self, name, value):
+        self.printer.__setattr__(name, value)
 
     def data_update(self, data):
         #print("data.state: %s self.printer.state: %s" % (data.state, self.printer.state))
@@ -466,13 +474,13 @@ class LCD:
         while self.running:
                 incoming_byte = self.ser.read(1)
                 #
-                if self.rx_state == RX_STATE_IDLE:
-                    if incoming_byte[0] == FHONE:
+                if self.rx_state == RxState.IDLE:
+                    if incoming_byte[0] == FHdrId.ONE:
                         self.rx_buf.extend(incoming_byte)
-                    elif incoming_byte[0] == FHTWO:
-                        if self.rx_buf[0] == FHONE:
+                    elif incoming_byte[0] == FHdrId.TWO:
+                        if self.rx_buf[0] == FHdrId.ONE:
                             self.rx_buf.extend(incoming_byte)
-                            self.rx_state = RX_STATE_READ_LEN
+                            self.rx_state = RxState.READ_LEN
                         else:
                             self.rx_buf.clear()
                             print("Unexpected header received: 0x%02x ()" % incoming_byte[0])
@@ -481,17 +489,17 @@ class LCD:
                         self.error_from_lcd = True
                         print("Unexpected data received: 0x%02x" % incoming_byte[0])
                 #
-                elif self.rx_state == RX_STATE_READ_LEN:
+                elif self.rx_state == RxState.READ_LEN:
                     # Check if len is as expected, seems to alway be 6 bytes?
-                    #if incomingByte[0] == FHLEN:
+                    #if incomingByte[0] == FHdr.LEN:
                     self.rx_buf.extend(incoming_byte) # Read length
-                    self.rx_state = RX_STATE_READ_DAT
+                    self.rx_state = RxState.READ_DAT
                     #else:
                     #    self.rx_buf.clear()
                     #    self.rx_state = RX_STATE_IDLE
                     #    print("Unexpected len param received: 0x%02x" % incomingByte[0])
                 #
-                elif self.rx_state == RX_STATE_READ_DAT:
+                elif self.rx_state == RxState.READ_DAT:
                     self.rx_buf.extend(incoming_byte)
                     self.rx_data_cnt += 1
                     len = self.rx_buf[2]
@@ -503,13 +511,13 @@ class LCD:
                         self._handle_command(cmd, data)
                         self.rx_buf.clear()
                         self.rx_data_cnt = 0
-                        self.rx_state = RX_STATE_IDLE
+                        self.rx_state = RxState.IDLE
 
     def _handle_command(self, cmd, dat):
-        if cmd == CMD_WRITEVAR: #0x82
+        if cmd == CMD.WRITEVAR: #0x82
             print("Write variable command received")
             print(binascii.hexlify(dat))
-        elif cmd == CMD_READVAR: #0x83
+        elif cmd == CMD.READVAR: #0x83
             addr = dat[0]
             addr = (addr << 8) | dat[1]
             bytelen = dat[2]
@@ -519,7 +527,7 @@ class LCD:
                 data[idx] = dat[3 + i]
                 data[idx] = (data[idx] << 8) | dat[4 + i]
             self._handle_readvar(addr, data)
-        elif cmd == CMD_CONSOLE: #0x42
+        elif cmd == CMD.CONSOLE: #0x42
             addr = dat[0]
             addr = (addr << 8) | dat[1]
             data = dat[3:] # Remove addr and len
@@ -564,7 +572,7 @@ class LCD:
                     i += 1
                 self.write("page file1")
             else:
-                self.files = False
+                self.files = None
                 # Clear old files from LCD
                 for i in range(0, MaxFileNumber):
                         page_num = ((i / 5) + 1)
@@ -807,23 +815,23 @@ class LCD:
         elif data[0] == 0x02: #Turn off bed
             self.callback(self.evt.BED, 0)
         elif data[0] == 0x09: #Preheat PLA
-            self._preheat(PLA)
+            self._preheat(TPreset.PLA)
         elif data[0] == 0x0a: #Preheat ABS
-            self._preheat(ABS)
+            self._preheat(TPreset.ABS)
         elif data[0] == 0x0b: #Preheat PETG
-            self._preheat(PETG)
+            self._preheat(TPreset.PETG)
         elif data[0] == 0x0c: #Preheat TPU
-            self._preheat(TPU)
+            self._preheat(TPreset.TPU)
         elif data[0] == 0x0d: #Preheat PLA setting
-            self._preheat_settings(PLA)
+            self._preheat_settings(TPreset.PLA)
         elif data[0] == 0x0e: #Preheat ABS setting
-            self._preheat_settings(ABS)
+            self._preheat_settings(TPreset.ABS)
         elif data[0] == 0x0f: #Preheat PETG setting
-            self._preheat_settings(PETG)
+            self._preheat_settings(TPreset.PETG)
         elif data[0] == 0x10: #Preheat TPU setting
-            self._preheat_settings(TPU)
+            self._preheat_settings(TPreset.TPU)
         elif data[0] == 0x11: # Level
-            self._preheat_settings(PROBE)
+            self._preheat_settings(TPreset.PROBE)
         else:
             print("_CoolScreen: Not recognised %d" % data[0])
     
